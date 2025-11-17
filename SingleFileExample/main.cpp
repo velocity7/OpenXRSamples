@@ -125,6 +125,8 @@ void                 d3d_swapchain_destroy(swapchain_t& swapchain);
 XMMATRIX             d3d_xr_projection(XrFovf fov, float clip_near, float clip_far);
 ID3DBlob* d3d_compile_shader(const char* hlsl, const char* entrypoint, const char* target);
 
+DWORD startTime;
+
 ///////////////////////////////////////////
 
 constexpr char app_shader_code[] = R"_(
@@ -176,6 +178,8 @@ uint16_t app_inds[] = {
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 	// int main() {
+	startTime = timeGetTime();
+
 	Result result = openxr_init("Single file OpenXR", d3d_swapchain_fmt);
 	if (!result.ok) {
 		d3d_shutdown();
@@ -676,12 +680,18 @@ void openxr_render_frame() {
 				// Use the recommended resolution to adjust your swapchain or view rendering
 				if (recommendedWidth != resolution.recommendedImageDimensions.width || recommendedHeight != resolution.recommendedImageDimensions.height)
 				{
+					DWORD time = timeGetTime();
+					if (time < startTime)
+						startTime = time;
+
+					time = time - startTime;
+
 					recommendedWidth = resolution.recommendedImageDimensions.width;
 					recommendedHeight = resolution.recommendedImageDimensions.height;
 
 					// Use sprintf to format the message
 					char message[100];
-					sprintf(message, "Meta new recommended resolution: %u x %u\n", recommendedWidth, recommendedHeight);
+					sprintf(message, "(%u) Meta new recommended resolution: %u x %u\n", time, recommendedWidth, recommendedHeight);
 
 					// Send the formatted string to the Output Window
 					OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
@@ -750,12 +760,18 @@ bool openxr_render_layer(XrTime predictedTime, vector<XrCompositionLayerProjecti
 
 		if (previousWidth != xr_swapchains[i].width || previousHeight != xr_swapchains[i].height)
 		{
+			DWORD time = timeGetTime();
+			if (time < startTime)
+				startTime = time;
+
+			time = time - startTime;
+
 			previousWidth = xr_swapchains[i].width;
 			previousHeight = xr_swapchains[i].height;
 
 			// Use sprintf to format the message
 			char message[100];
-			sprintf(message, "Current swapchain image resolution: %u x %u\n", previousWidth, previousHeight);
+			sprintf(message, "(%u) Current swapchain image resolution: %u x %u\n", time, previousWidth, previousHeight);
 
 			// Send the formatted string to the Output Window
 			OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
