@@ -630,6 +630,9 @@ void DbgPrintf(LPTSTR fmt, ...)
 	OutputDebugString(TEXT("\r\n"));
 }
 
+uint32_t recommendedWidth;
+uint32_t recommendedHeight;
+
 void openxr_render_frame() {
 	// Block until the previous frame is finished displaying, and is ready for another one.
 	// Also returns a prediction of when the next frame will be displayed, for use with predicting
@@ -671,20 +674,20 @@ void openxr_render_frame() {
 
 			if (XR_SUCCEEDED(result)) {
 				// Use the recommended resolution to adjust your swapchain or view rendering
-				uint32_t recommendedWidth = resolution.recommendedImageDimensions.width;
-				uint32_t recommendedHeight = resolution.recommendedImageDimensions.height;
+				if (recommendedWidth != resolution.recommendedImageDimensions.width || recommendedHeight != resolution.recommendedImageDimensions.height)
+				{
+					recommendedWidth = resolution.recommendedImageDimensions.width;
+					recommendedHeight = resolution.recommendedImageDimensions.height;
 
-				// Log or use the values:
-				// OutputDebugStringW("Recommended resolution: %u x %u\n", recommendedWidth, recommendedHeight);
+					// Use sprintf to format the message
+					char message[100];
+					sprintf(message, "Meta new recommended resolution: %u x %u\n", recommendedWidth, recommendedHeight);
 
-				// Use sprintf to format the message
-				char message[100];
-				sprintf(message, "Recommended resolution: %u x %u\n", recommendedWidth, recommendedHeight);
+					// Send the formatted string to the Output Window
+					OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
 
-				// Send the formatted string to the Output Window
-				OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
-				
-				printf("Recommended resolution: %u x %u\n", recommendedWidth, recommendedHeight);
+					printf(message);
+				}
 			}
 			else {
 				// Handle error
@@ -706,6 +709,9 @@ void openxr_render_frame() {
 }
 
 ///////////////////////////////////////////
+
+uint32_t previousWidth;
+uint32_t previousHeight;
 
 bool openxr_render_layer(XrTime predictedTime, vector<XrCompositionLayerProjectionView>& views, XrCompositionLayerProjection& layer) {
 
@@ -741,6 +747,21 @@ bool openxr_render_layer(XrTime predictedTime, vector<XrCompositionLayerProjecti
 		views[i].subImage.swapchain = xr_swapchains[i].handle;
 		views[i].subImage.imageRect.offset = { 0, 0 };
 		views[i].subImage.imageRect.extent = { xr_swapchains[i].width, xr_swapchains[i].height };
+
+		if (previousWidth != xr_swapchains[i].width || previousHeight != xr_swapchains[i].height)
+		{
+			previousWidth = xr_swapchains[i].width;
+			previousHeight = xr_swapchains[i].height;
+
+			// Use sprintf to format the message
+			char message[100];
+			sprintf(message, "Current swapchain image resolution: %u x %u\n", previousWidth, previousHeight);
+
+			// Send the formatted string to the Output Window
+			OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
+
+			printf(message);
+		}
 
 		// Call the rendering callback with our view and swapchain info
 		d3d_render_layer(views[i], xr_swapchains[i].surface_data[img_id]);
