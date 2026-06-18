@@ -616,13 +616,6 @@ void openxr_poll_events(bool& exit) {
 				xrBeginSession(xr_session, &begin_info);
 				xr_running = true;
 			} break;
-			case XR_TYPE_EVENT_DATA_VIEW_CONFIGURATION_VIEWS_CHANGED_EXT: {
-				auto viewsChangedEvent = reinterpret_cast<XrEventDataViewConfigurationViewsChangedEXT*>(&event_buffer);
-
-				// 2. Respond to the view configuration change
-				// E.g., re-enumerate views to get the new recommended image rects and update swapchains
-				HandleViewConfigurationChange(xr_instance, xr_system_id, viewsChangedEvent->viewConfigurationType);
-			} break;
 			case XR_SESSION_STATE_STOPPING: {
 				xr_running = false;
 				xrEndSession(xr_session);
@@ -630,6 +623,13 @@ void openxr_poll_events(bool& exit) {
 			case XR_SESSION_STATE_EXITING:      exit = true;              break;
 			case XR_SESSION_STATE_LOSS_PENDING: exit = true;              break;
 			}
+		} break;
+		case XR_TYPE_EVENT_DATA_VIEW_CONFIGURATION_VIEWS_CHANGED_EXT: {
+			auto viewsChangedEvent = reinterpret_cast<XrEventDataViewConfigurationViewsChangedEXT*>(&event_buffer);
+
+			// 2. Respond to the view configuration change
+			// E.g., re-enumerate views to get the new recommended image rects and update swapchains
+			HandleViewConfigurationChange(xr_instance, xr_system_id, viewsChangedEvent->viewConfigurationType);
 		} break;
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: exit = true; return;
 		}
@@ -748,6 +748,7 @@ void openxr_render_frame() {
 		layer = (XrCompositionLayerBaseHeader*)&layer_proj;
 	}
 
+	/*
 	g_FrameCounter++;
 	// Check for resolution updates every 60 frames instead of waiting for a broken event
 	if (g_FrameCounter % 60 == 0) {
@@ -762,6 +763,7 @@ void openxr_render_frame() {
 		// and skips reallocation if they are identical.
 		HandleViewConfigurationChange(xr_instance, xr_system_id, app_config_view);
 	}
+	*/
 
 	// We're finished with rendering our layer, so send it off for display!
 	XrFrameEndInfo end_info{ XR_TYPE_FRAME_END_INFO };
