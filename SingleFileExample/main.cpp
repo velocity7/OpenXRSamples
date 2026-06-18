@@ -20,6 +20,9 @@
 using namespace std;
 using namespace DirectX; // Matrix math
 
+uint32_t recommendedWidth;
+uint32_t recommendedHeight;
+
 ///////////////////////////////////////////
 
 struct Result {
@@ -231,6 +234,7 @@ Result openxr_init(const char* app_name, int64_t swapchain_format) {
 		XR_KHR_D3D11_ENABLE_EXTENSION_NAME, // Use Direct3D11 for rendering
 		XR_EXT_DEBUG_UTILS_EXTENSION_NAME,  // Debug utils for extra info
 		XR_META_RECOMMENDED_LAYER_RESOLUTION_EXTENSION_NAME,
+		XR_EXT_VIEW_CONFIGURATION_VIEWS_CHANGE_EXTENSION_NAME,
 	};
 
 	// We'll get a list of extensions that OpenXR provides using this 
@@ -518,6 +522,67 @@ void openxr_shutdown() {
 
 ///////////////////////////////////////////
 
+XrSessionState last_xr_session_state = XR_SESSION_STATE_UNKNOWN;
+
+std::string stateToString(XrSessionState state)
+{
+	switch (state)
+	{
+	case XR_SESSION_STATE_UNKNOWN: return "XR_SESSION_STATE_UNKNOWN";
+	case XR_SESSION_STATE_IDLE: return "XR_SESSION_STATE_IDLE";
+	case XR_SESSION_STATE_READY: return "XR_SESSION_STATE_READY";
+	case XR_SESSION_STATE_SYNCHRONIZED: return "XR_SESSION_STATE_SYNCHRONIZED";
+	case XR_SESSION_STATE_VISIBLE: return "XR_SESSION_STATE_VISIBLE";
+	case XR_SESSION_STATE_FOCUSED: return "XR_SESSION_STATE_FOCUSED";
+	case XR_SESSION_STATE_STOPPING: return "XR_SESSION_STATE_STOPPING";
+	case XR_SESSION_STATE_LOSS_PENDING: return "XR_SESSION_STATE_LOSS_PENDING";
+	case XR_SESSION_STATE_EXITING: return "XR_SESSION_STATE_EXITING";
+	case XR_SESSION_STATE_MAX_ENUM: return "XR_SESSION_STATE_MAX_ENUM";
+	default: return "";
+	}
+}
+
+void HandleViewConfigurationChange(XrInstance instance, XrSystemId systemId, XrViewConfigurationType configType) {
+	uint32_t viewCount = 0;
+
+	// Get the updated view count
+	xrEnumerateViewConfigurationViews(instance, systemId, configType, 0, &viewCount, nullptr);
+
+	std::vector<XrViewConfigurationView> views(viewCount, { XR_TYPE_VIEW_CONFIGURATION_VIEW });
+
+	// Retrieve the newly recommended properties
+	xrEnumerateViewConfigurationViews(instance, systemId, configType, viewCount, &viewCount, views.data());
+
+	// 4. Update your rendering resources with the new view properties
+	// UpdateSwapchains(views);
+	for (size_t i = 0; i < views.size(); ++i) {
+		uint32_t newWidth = views[i].recommendedImageRectWidth;
+		uint32_t newHeight = views[i].recommendedImageRectHeight;
+
+		// Use the recommended resolution to adjust your swapchain or view rendering
+		if (recommendedWidth != newWidth || recommendedHeight != newHeight)
+		{
+			DWORD time = timeGetTime();
+			if (time < startTime)
+				startTime = time;
+
+			time = time - startTime;
+
+			recommendedWidth = newWidth;
+			recommendedHeight = newHeight;
+
+			// Use sprintf to format the message
+			char message[100];
+			sprintf(message, "(%u) New recommended resolution: %u x %u\n", time, recommendedWidth, recommendedHeight);
+
+			// Send the formatted string to the Output Window
+			OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
+
+			printf(message);
+		}
+	}
+}
+
 void openxr_poll_events(bool& exit) {
 	exit = false;
 
@@ -530,12 +595,33 @@ void openxr_poll_events(bool& exit) {
 			xr_session_state = changed->state;
 
 			// Session state change is where we can begin and end sessions, as well as find quit messages!
+			if (last_xr_session_state != xr_session_state)
+			{
+				last_xr_session_state = xr_session_state;
+
+				// Use sprintf to format the message
+				char message[100];
+				sprintf(message, "(%u) New state detected: %s\n", timeGetTime(), stateToString(last_xr_session_state).c_str());
+
+				// Send the formatted string to the Output Window
+				OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
+
+				printf(message);
+			}
+
 			switch (xr_session_state) {
 			case XR_SESSION_STATE_READY: {
 				XrSessionBeginInfo begin_info = { XR_TYPE_SESSION_BEGIN_INFO };
 				begin_info.primaryViewConfigurationType = app_config_view;
 				xrBeginSession(xr_session, &begin_info);
 				xr_running = true;
+			} break;
+			case XR_TYPE_EVENT_DATA_VIEW_CONFIGURATION_VIEWS_CHANGED_EXT: {
+				auto viewsChangedEvent = reinterpret_cast<XrEventDataViewConfigurationViewsChangedEXT*>(&event_buffer);
+
+				// 2. Respond to the view configuration change
+				// E.g., re-enumerate views to get the new recommended image rects and update swapchains
+				HandleViewConfigurationChange(xr_instance, xr_system_id, viewsChangedEvent->viewConfigurationType);
 			} break;
 			case XR_SESSION_STATE_STOPPING: {
 				xr_running = false;
@@ -550,6 +636,7 @@ void openxr_poll_events(bool& exit) {
 		event_buffer = { XR_TYPE_EVENT_DATA_BUFFER };
 	}
 }
+
 
 ///////////////////////////////////////////
 
@@ -634,8 +721,7 @@ void DbgPrintf(LPTSTR fmt, ...)
 	OutputDebugString(TEXT("\r\n"));
 }
 
-uint32_t recommendedWidth;
-uint32_t recommendedHeight;
+uint64_t g_FrameCounter = 0;
 
 void openxr_render_frame() {
 	// Block until the previous frame is finished displaying, and is ready for another one.
@@ -662,51 +748,19 @@ void openxr_render_frame() {
 		layer = (XrCompositionLayerBaseHeader*)&layer_proj;
 	}
 
-	if (layer != nullptr)
-	{
-		XrResult result = xrGetInstanceProcAddr(xr_instance, "xrGetRecommendedLayerResolutionMETA", (PFN_xrVoidFunction*)&ext_xrGetRecommendedLayerResolutionMETA_fn);
+	g_FrameCounter++;
+	// Check for resolution updates every 60 frames instead of waiting for a broken event
+	if (g_FrameCounter % 60 == 0) {
+		uint32_t viewCount = 0;
 
-		if (XR_SUCCEEDED(result)) {
-			XrRecommendedLayerResolutionGetInfoMETA resolutionInfo = {};
-			resolutionInfo.type = XR_TYPE_RECOMMENDED_LAYER_RESOLUTION_GET_INFO_META;
-			resolutionInfo.layer = layer;
-			resolutionInfo.predictedDisplayTime = frame_state.predictedDisplayTime;
+		xrEnumerateViewConfigurationViews(xr_instance, xr_system_id, app_config_view, 0, &viewCount, nullptr);
 
-			XrRecommendedLayerResolutionMETA resolution = {};
+		std::vector<XrViewConfigurationView> liveViews(viewCount, { XR_TYPE_VIEW_CONFIGURATION_VIEW });
+		xrEnumerateViewConfigurationViews(xr_instance, xr_system_id, app_config_view, viewCount, &viewCount, liveViews.data());
 
-			XrResult result = ext_xrGetRecommendedLayerResolutionMETA_fn(xr_session, &resolutionInfo, &resolution);
-
-			if (XR_SUCCEEDED(result)) {
-				// Use the recommended resolution to adjust your swapchain or view rendering
-				if (recommendedWidth != resolution.recommendedImageDimensions.width || recommendedHeight != resolution.recommendedImageDimensions.height)
-				{
-					DWORD time = timeGetTime();
-					if (time < startTime)
-						startTime = time;
-
-					time = time - startTime;
-
-					recommendedWidth = resolution.recommendedImageDimensions.width;
-					recommendedHeight = resolution.recommendedImageDimensions.height;
-
-					// Use sprintf to format the message
-					char message[100];
-					sprintf(message, "(%u) Meta new recommended resolution: %u x %u\n", time, recommendedWidth, recommendedHeight);
-
-					// Send the formatted string to the Output Window
-					OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
-
-					printf(message);
-				}
-			}
-			else {
-				// Handle error
-			}
-		}
-		else
-		{
-
-		}
+		// UpdateSwapchains handles checking if the dimensions actually changed 
+		// and skips reallocation if they are identical.
+		HandleViewConfigurationChange(xr_instance, xr_system_id, app_config_view);
 	}
 
 	// We're finished with rendering our layer, so send it off for display!
