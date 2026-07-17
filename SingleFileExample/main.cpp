@@ -20,8 +20,8 @@
 using namespace std;
 using namespace DirectX; // Matrix math
 
-uint32_t recommendedWidth;
-uint32_t recommendedHeight;
+uint32_t swapChainWidth;
+uint32_t swapChainHeight;
 
 ///////////////////////////////////////////
 
@@ -235,6 +235,7 @@ Result openxr_init(const char* app_name, int64_t swapchain_format) {
 		XR_EXT_DEBUG_UTILS_EXTENSION_NAME,  // Debug utils for extra info
 		XR_META_RECOMMENDED_LAYER_RESOLUTION_EXTENSION_NAME,
 		XR_EXT_VIEW_CONFIGURATION_VIEWS_CHANGE_EXTENSION_NAME,
+		XR_EXT_USER_PRESENCE_EXTENSION_NAME,
 	};
 
 	// We'll get a list of extensions that OpenXR provides using this 
@@ -560,7 +561,7 @@ void HandleViewConfigurationChange(XrInstance instance, XrSystemId systemId, XrV
 		uint32_t newHeight = views[i].recommendedImageRectHeight;
 
 		// Use the recommended resolution to adjust your swapchain or view rendering
-		if (recommendedWidth != newWidth || recommendedHeight != newHeight)
+		if (swapChainWidth != newWidth || swapChainHeight != newHeight)
 		{
 			DWORD time = timeGetTime();
 			if (time < startTime)
@@ -568,12 +569,12 @@ void HandleViewConfigurationChange(XrInstance instance, XrSystemId systemId, XrV
 
 			time = time - startTime;
 
-			recommendedWidth = newWidth;
-			recommendedHeight = newHeight;
+			swapChainWidth = newWidth;
+			swapChainHeight = newHeight;
 
 			// Use sprintf to format the message
 			char message[100];
-			sprintf(message, "(%u) New recommended resolution: %u x %u\n", time, recommendedWidth, recommendedHeight);
+			sprintf(message, "(%u) New resolution: %u x %u\n", time, swapChainWidth, swapChainHeight);
 
 			// Send the formatted string to the Output Window
 			OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
@@ -583,7 +584,10 @@ void HandleViewConfigurationChange(XrInstance instance, XrSystemId systemId, XrV
 	}
 }
 
+bool global_isUserPresent = FALSE;
+
 void openxr_poll_events(bool& exit) {
+	DWORD time = timeGetTime();
 	exit = false;
 
 	XrEventDataBuffer event_buffer = { XR_TYPE_EVENT_DATA_BUFFER };
@@ -630,6 +634,34 @@ void openxr_poll_events(bool& exit) {
 			// 2. Respond to the view configuration change
 			// E.g., re-enumerate views to get the new recommended image rects and update swapchains
 			HandleViewConfigurationChange(xr_instance, xr_system_id, viewsChangedEvent->viewConfigurationType);
+			break;		
+		} break;
+		case XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT: {
+			auto* presenceEvent = reinterpret_cast<XrEventDataUserPresenceChangedEXT*>(&event_buffer);
+
+			if (presenceEvent->isUserPresent == XR_TRUE) {
+				// Logic for when the user puts on the headset
+				if (!global_isUserPresent)
+				{
+					global_isUserPresent = true;
+					char message[100];
+					sprintf(message, "(%u) User has put on headset\n", time);
+					OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
+					printf(message);
+				}
+			}
+			else {
+				// Logic for when the user takes off the headset
+				if (global_isUserPresent)
+				{
+					global_isUserPresent = false;
+					char message[100];
+					sprintf(message, "(%u) User has taken off headset\n", time);
+					OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
+					printf(message);
+				}
+			}
+
 		} break;
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: exit = true; return;
 		}
@@ -828,6 +860,9 @@ bool openxr_render_layer(XrTime predictedTime, vector<XrCompositionLayerProjecti
 			// Use sprintf to format the message
 			char message[100];
 			sprintf(message, "(%u) Current swapchain image resolution: %u x %u\n", time, previousWidth, previousHeight);
+
+			swapChainHeight = previousHeight;
+			swapChainWidth = previousWidth;
 
 			// Send the formatted string to the Output Window
 			OutputDebugStringA(message);  // Use OutputDebugStringA for ANSI strings
