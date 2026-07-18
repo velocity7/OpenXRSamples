@@ -180,6 +180,17 @@ uint16_t app_inds[] = {
 ///////////////////////////////////////////
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
+	// 1. Allocate a standard console window for this process
+	AllocConsole();
+
+	// 2. Redirect standard standard input/output streams to the new console
+	freopen_s((FILE**)stdin, "CONIN$", "r", stdin);
+	freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
+	freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
+
+	// 3. You can now use standard C++ streams
+	std::cout << "This console is linked to a GUI application!" << std::endl;
+
 	// int main() {
 	startTime = timeGetTime();
 
@@ -212,6 +223,7 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
 	openxr_shutdown();
 	d3d_shutdown();
+	FreeConsole();
 	return 0;
 }
 

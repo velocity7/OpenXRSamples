@@ -119,8 +119,7 @@
       </Message>
     </PostBuildEvent>
     <Link>
-      <SubSystem>
-      </SubSystem>
+      <SubSystem>NotSet</SubSystem>
       <AdditionalDependencies>winmm.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
