@@ -52,6 +52,12 @@ struct input_state_t {
 	XrPosef  handPose[2];
 	XrBool32 renderHand[2];
 	XrBool32 handSelect[2];
+
+	// Eye tracking fields
+	XrAction    gazeAction;
+	XrSpace     gazeSpace;
+	XrPosef     gazePose;
+	XrBool32    renderGaze;
 };
 
 ///////////////////////////////////////////
@@ -248,6 +254,7 @@ Result openxr_init(const char* app_name, int64_t swapchain_format) {
 		XR_META_RECOMMENDED_LAYER_RESOLUTION_EXTENSION_NAME,
 		XR_EXT_VIEW_CONFIGURATION_VIEWS_CHANGE_EXTENSION_NAME,
 		XR_EXT_USER_PRESENCE_EXTENSION_NAME,
+		XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME,
 	};
 
 	// We'll get a list of extensions that OpenXR provides using this 
@@ -502,6 +509,35 @@ void openxr_make_actions() {
 		xrCreateActionSpace(xr_session, &action_space_info, &xr_input.handSpace[i]);
 	}
 
+	XrActionCreateInfo gaze_action_info = { XR_TYPE_ACTION_CREATE_INFO };
+	gaze_action_info.actionType = XR_ACTION_TYPE_POSE_INPUT;
+	strcpy_s(gaze_action_info.actionName, "eye_gaze");
+	strcpy_s(gaze_action_info.localizedActionName, "Eye Gaze");
+	xrCreateAction(xr_input.actionSet, &gaze_action_info, &xr_input.gazeAction);
+
+	// Suggest binding for eye gaze using the correct XR_EXT_eye_gaze_interaction paths
+	XrPath gaze_profile_path;
+	XrPath gaze_path;
+	xrStringToPath(xr_instance, "/interaction_profiles/ext/eye_gaze_interaction", &gaze_profile_path);
+	xrStringToPath(xr_instance, "/user/eyes_ext/input/gaze_ext/pose", &gaze_path); // Corrected path
+
+	XrActionSuggestedBinding gaze_binding = { xr_input.gazeAction, gaze_path };
+	XrInteractionProfileSuggestedBinding gaze_suggested_binds = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+	gaze_suggested_binds.interactionProfile = gaze_profile_path;
+	gaze_suggested_binds.suggestedBindings = &gaze_binding;
+	gaze_suggested_binds.countSuggestedBindings = 1;
+	xrSuggestInteractionProfileBindings(xr_instance, &gaze_suggested_binds);
+
+	// Create tracking space for gaze
+	XrActionSpaceCreateInfo gaze_space_info = { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+	gaze_space_info.action = xr_input.gazeAction;
+	gaze_space_info.poseInActionSpace = xr_pose_identity;
+	xrCreateActionSpace(xr_session, &gaze_space_info, &xr_input.gazeSpace);
+
+	// Create tracking space for gaze with the proper user path subaction
+	XrPath eyes_subaction_path;
+	xrStringToPath(xr_instance, "/user/eyes_ext", &eyes_subaction_path);
+
 	// Attach the action set we just made to the session
 	XrSessionActionSetsAttachInfo attach_info = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
 	attach_info.countActionSets = 1;
@@ -691,7 +727,7 @@ void openxr_poll_actions() {
 	// Update our action set with up-to-date input data!
 	XrActiveActionSet action_set = { };
 	action_set.actionSet = xr_input.actionSet;
-	action_set.subactionPath = XR_NULL_PATH;
+	action_set.subactionPath = XR_NULL_PATH; // Must be NULL to cover both controllers and eyes_ext
 
 	XrActionsSyncInfo sync_info = { XR_TYPE_ACTIONS_SYNC_INFO };
 	sync_info.countActiveActionSets = 1;
@@ -726,6 +762,13 @@ void openxr_poll_actions() {
 			}
 		}
 	}
+
+	XrActionStateGetInfo gaze_get_info = { XR_TYPE_ACTION_STATE_GET_INFO };
+	gaze_get_info.action = xr_input.gazeAction;
+	gaze_get_info.subactionPath = XR_NULL_PATH; // Gaze uses /user/eyes_ext implicitly via profile
+	XrActionStatePose gaze_pose_state = { XR_TYPE_ACTION_STATE_POSE };
+	xrGetActionStatePose(xr_session, &gaze_get_info, &gaze_pose_state);
+	xr_input.renderGaze = gaze_pose_state.isActive;
 }
 
 ///////////////////////////////////////////
@@ -745,6 +788,16 @@ void openxr_poll_predicted(XrTime predicted_time) {
 			(spaceRelation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
 			(spaceRelation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
 			xr_input.handPose[i] = spaceRelation.pose;
+		}
+	}
+
+	if (xr_input.renderGaze) {
+		XrSpaceLocation spaceRelation = { XR_TYPE_SPACE_LOCATION };
+		XrResult res = xrLocateSpace(xr_input.gazeSpace, xr_app_space, predicted_time, &spaceRelation);
+		if (XR_UNQUALIFIED_SUCCESS(res) &&
+			(spaceRelation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
+			(spaceRelation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+			xr_input.gazePose = spaceRelation.pose;
 		}
 	}
 }
@@ -1111,6 +1164,30 @@ void app_draw(XrCompositionLayerProjectionView& view) {
 
 		// Update the shader's constant buffer with the transform matrix info, and then draw the mesh!
 		XMStoreFloat4x4(&transform_buffer.world, XMMatrixTranspose(mat_model));
+		d3d_context->UpdateSubresource(app_constant_buffer, 0, nullptr, &transform_buffer, 0, 0);
+		d3d_context->DrawIndexed((UINT)_countof(app_inds), 0, 0);
+	}
+
+	// Draw eye gaze cursor if tracked
+	if (xr_input.renderGaze) {
+		// Load the gaze orientation and position
+		XMVECTOR gaze_pos = XMLoadFloat3((XMFLOAT3*)&xr_input.gazePose.position);
+		XMVECTOR gaze_rot = XMLoadFloat4((XMFLOAT4*)&xr_input.gazePose.orientation);
+
+		// Calculate forward vector from the orientation quaternion (Z-forward in OpenXR)
+		XMVECTOR forward = XMVector3Rotate(XMVectorSet(0, 0, -1, 0), gaze_rot);
+
+		// Project the cursor 2 meters (2.0f meters) along the gaze vector from the eyes
+		XMVECTOR cursor_pos = XMVectorAdd(gaze_pos, XMVectorScale(forward, 2.0f));
+
+		// Build world matrix for a 5cm cursor at the projected point
+		XMMATRIX mat_gaze_model = XMMatrixAffineTransformation(
+			DirectX::g_XMOne * 0.05f, DirectX::g_XMZero,
+			gaze_rot,
+			cursor_pos
+		);
+
+		XMStoreFloat4x4(&transform_buffer.world, XMMatrixTranspose(mat_gaze_model));
 		d3d_context->UpdateSubresource(app_constant_buffer, 0, nullptr, &transform_buffer, 0, 0);
 		d3d_context->DrawIndexed((UINT)_countof(app_inds), 0, 0);
 	}
